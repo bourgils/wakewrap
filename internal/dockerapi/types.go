@@ -25,6 +25,7 @@ type HostConfigInspect struct {
 	DNSSearch  []string `json:"DnsSearch"`
 	DNSOptions []string `json:"DnsOptions"`
 	ExtraHosts []string `json:"ExtraHosts"`
+	ShmSize    int64    `json:"ShmSize"`
 }
 
 type ContainerNetworkSettings struct {
@@ -90,6 +91,7 @@ type ChildHostConfig struct {
 	DNSSearch      []string    `json:"DnsSearch,omitempty"`
 	DNSOptions     []string    `json:"DnsOptions,omitempty"`
 	ExtraHosts     []string    `json:"ExtraHosts,omitempty"`
+	ShmSize        int64       `json:"ShmSize,omitempty"`
 	SecurityOpt    []string    `json:"SecurityOpt,omitempty"`
 	Privileged     bool        `json:"Privileged"`
 	ReadonlyRootfs bool        `json:"ReadonlyRootfs"`

@@ -50,6 +50,7 @@ func buildChildSpec(cfg config.Config, parent dockerapi.ContainerInspect, image 
 			DNSSearch:      append([]string(nil), parent.HostConfig.DNSSearch...),
 			DNSOptions:     append([]string(nil), parent.HostConfig.DNSOptions...),
 			ExtraHosts:     append([]string(nil), parent.HostConfig.ExtraHosts...),
+			ShmSize:        parent.HostConfig.ShmSize,
 			SecurityOpt:    []string{"no-new-privileges:true"},
 			Privileged:     false,
 			ReadonlyRootfs: false,
