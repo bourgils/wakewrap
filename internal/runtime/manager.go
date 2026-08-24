@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"sort"
 	"sync"
@@ -52,6 +53,7 @@ type dockerClient interface {
 	CreateContainer(context.Context, string, dockerapi.ContainerCreateRequest) (dockerapi.ContainerCreateResponse, error)
 	ConnectNetwork(context.Context, string, string) error
 	StartContainer(context.Context, string) error
+	StreamContainerLogs(context.Context, string, io.Writer, io.Writer) error
 	StopContainer(context.Context, string, time.Duration) error
 	RemoveContainer(context.Context, string) error
 	ListManagedContainers(context.Context, string) ([]dockerapi.ContainerSummary, error)
@@ -296,6 +298,7 @@ func (m *Manager) startChild(ctx context.Context, generation uint64, expectedPor
 	if err := m.docker.StartContainer(operationCtx, childID); err != nil {
 		return startedChild{}, fmt.Errorf("start child: %w", err)
 	}
+	go m.streamChildLogs(ctx, childID)
 	child, err := m.inspectOwned(operationCtx, childID)
 	if err != nil {
 		return startedChild{}, err
@@ -313,6 +316,13 @@ func (m *Manager) startChild(ctx context.Context, generation uint64, expectedPor
 	}
 	m.logger.Printf("child %s running at %s on TCP ports %v", shortID(childID), ip, ports)
 	return startedChild{id: childID, ip: ip, ports: ports}, nil
+}
+
+func (m *Manager) streamChildLogs(ctx context.Context, id string) {
+	output := m.logger.Writer()
+	if err := m.docker.StreamContainerLogs(ctx, id, output, output); err != nil && ctx.Err() == nil && !dockerapi.IsNotFound(err) {
+		m.logger.Printf("cannot stream logs from child %s: %v", shortID(id), err)
+	}
 }
 
 func (m *Manager) prepareImage(ctx context.Context) (dockerapi.ImageInspect, error) {

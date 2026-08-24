@@ -1,8 +1,12 @@
 package dockerapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -71,6 +75,61 @@ func TestMutatingRoutes(t *testing.T) {
 	}
 }
 
+func TestStreamContainerLogsPreservesStandardStreams(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/containers/child/logs" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		for key, want := range map[string]string{"follow": "true", "stdout": "true", "stderr": "true", "tail": "all"} {
+			if got := r.URL.Query().Get(key); got != want {
+				t.Fatalf("query %s = %q, want %q", key, got, want)
+			}
+		}
+		writeLogFrame(t, w, 1, "application started\n")
+		writeLogFrame(t, w, 2, "application warning\n")
+		writeLogFrame(t, w, 1, "application ready\n")
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := client.StreamContainerLogs(context.Background(), "child", &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := stdout.String(), "application started\napplication ready\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if got, want := stderr.String(), "application warning\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestContainerLogStreamRejectsMalformedFrames(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []byte
+		want  error
+	}{
+		{name: "truncated header", input: []byte{1, 0}, want: io.ErrUnexpectedEOF},
+		{name: "truncated payload", input: []byte{1, 0, 0, 0, 0, 0, 0, 2, 'x'}, want: io.EOF},
+		{name: "unknown stream", input: []byte{3, 0, 0, 0, 0, 0, 0, 0}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := (containerLogStream{stdout: io.Discard, stderr: io.Discard}).copy(bytes.NewReader(test.input))
+			if err == nil {
+				t.Fatal("expected malformed stream to fail")
+			}
+			if test.want != nil && !errors.Is(err, test.want) {
+				t.Fatalf("error = %v, want %v", err, test.want)
+			}
+		})
+	}
+}
+
 func TestNotFoundIsClassified(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing", http.StatusNotFound)
@@ -83,6 +142,18 @@ func TestNotFoundIsClassified(t *testing.T) {
 	_, err = client.InspectImage(context.Background(), "missing")
 	if !IsNotFound(err) {
 		t.Fatalf("expected not found, got %v", err)
+	}
+}
+
+func writeLogFrame(t *testing.T, destination io.Writer, stream byte, payload string) {
+	t.Helper()
+	header := [8]byte{stream}
+	binary.BigEndian.PutUint32(header[4:], uint32(len(payload)))
+	if _, err := destination.Write(header[:]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(destination, payload); err != nil {
+		t.Fatal(err)
 	}
 }
 

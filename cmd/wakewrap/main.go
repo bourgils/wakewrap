@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	logger := log.New(os.Stderr, "wakewrap: ", log.LstdFlags|log.Lmsgprefix)
+	logger := log.New(os.Stderr, "[wakewrap] ", 0)
 	if err := run(logger); err != nil {
 		logger.Print(err)
 		os.Exit(1)

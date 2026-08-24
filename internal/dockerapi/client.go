@@ -3,6 +3,7 @@ package dockerapi
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -86,6 +87,16 @@ func (c *Client) StartContainer(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "/containers/"+pathSegment(id)+"/start", nil, struct{}{}, nil)
 }
 
+func (c *Client) StreamContainerLogs(ctx context.Context, id string, stdout, stderr io.Writer) error {
+	query := url.Values{
+		"follow": []string{"true"},
+		"stderr": []string{"true"},
+		"stdout": []string{"true"},
+		"tail":   []string{"all"},
+	}
+	return c.do(ctx, http.MethodGet, "/containers/"+pathSegment(id)+"/logs", query, nil, containerLogStream{stdout: stdout, stderr: stderr})
+}
+
 func (c *Client) StopContainer(ctx context.Context, id string, timeout time.Duration) error {
 	seconds := int((timeout + time.Second - 1) / time.Second)
 	query := url.Values{"t": []string{strconv.Itoa(seconds)}}
@@ -152,10 +163,46 @@ func (c *Client) do(ctx context.Context, method, endpoint string, query url.Valu
 		_, err = io.Copy(io.Discard, resp.Body)
 		return err
 	}
+	if stream, ok := result.(containerLogStream); ok {
+		if err := stream.copy(resp.Body); err != nil {
+			return fmt.Errorf("decode Docker response for %s: %w", endpoint, err)
+		}
+		return nil
+	}
 	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
 		return fmt.Errorf("decode Docker response for %s: %w", endpoint, err)
 	}
 	return nil
+}
+
+type containerLogStream struct {
+	stdout io.Writer
+	stderr io.Writer
+}
+
+func (s containerLogStream) copy(source io.Reader) error {
+	var header [8]byte
+	for {
+		if _, err := io.ReadFull(source, header[:]); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
+
+		var destination io.Writer
+		switch header[0] {
+		case 0, 1:
+			destination = s.stdout
+		case 2:
+			destination = s.stderr
+		default:
+			return fmt.Errorf("unknown Docker log stream %d", header[0])
+		}
+		if _, err := io.CopyN(destination, source, int64(binary.BigEndian.Uint32(header[4:]))); err != nil {
+			return err
+		}
+	}
 }
 
 func pathSegment(value string) string {
