@@ -33,6 +33,8 @@ type Config struct {
 	Ports               []int
 	AllowedRegistries   []string
 	DiscoveryConcurrent int
+	UpstreamTLS         bool
+	UpstreamTLSInsecure bool
 }
 
 func Load() (Config, error) {
@@ -64,6 +66,12 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.Ports, err = ports(os.Getenv("WAKE_PORTS")); err != nil {
+		return Config{}, err
+	}
+	if cfg.UpstreamTLS, err = booleanOr("WAKE_UPSTREAM_TLS", false); err != nil {
+		return Config{}, err
+	}
+	if cfg.UpstreamTLSInsecure, err = booleanOr("WAKE_UPSTREAM_TLS_INSECURE_SKIP_VERIFY", false); err != nil {
 		return Config{}, err
 	}
 	if raw := strings.TrimSpace(os.Getenv("WAKE_DISCOVERY_CONCURRENCY")); raw != "" {
@@ -105,6 +113,9 @@ func (c Config) Validate() error {
 	}
 	if !registryAllowed(c.Image, c.AllowedRegistries) {
 		return fmt.Errorf("image registry %q is not allowed", imageRegistry(c.Image))
+	}
+	if c.UpstreamTLSInsecure && !c.UpstreamTLS {
+		return errors.New("WAKE_UPSTREAM_TLS_INSECURE_SKIP_VERIFY requires WAKE_UPSTREAM_TLS=true")
 	}
 	return nil
 }
@@ -175,6 +186,18 @@ func durationOr(key string, fallback time.Duration) (time.Duration, error) {
 	value, err := time.ParseDuration(raw)
 	if err != nil {
 		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return value, nil
+}
+
+func booleanOr(key string, fallback bool) (bool, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean", key)
 	}
 	return value, nil
 }

@@ -55,3 +55,44 @@ func TestImageReferenceRejectsPathTraversal(t *testing.T) {
 		}
 	}
 }
+
+func TestBooleanOr(t *testing.T) {
+	t.Setenv("WAKE_TEST_BOOL", "true")
+	if value, err := booleanOr("WAKE_TEST_BOOL", false); err != nil || !value {
+		t.Fatalf("booleanOr() = %t, %v", value, err)
+	}
+	t.Setenv("WAKE_TEST_BOOL", "invalid")
+	if _, err := booleanOr("WAKE_TEST_BOOL", false); err == nil {
+		t.Fatal("expected invalid boolean to be rejected")
+	}
+}
+
+func TestLoadUpstreamTLS(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "tcp://127.0.0.1:2375")
+	t.Setenv("WAKE_IMAGE", "kasmweb/ubuntu-noble-desktop:1.18.0")
+	t.Setenv("WAKE_UPSTREAM_TLS", "true")
+	t.Setenv("WAKE_UPSTREAM_TLS_INSECURE_SKIP_VERIFY", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.UpstreamTLS || !cfg.UpstreamTLSInsecure {
+		t.Fatalf("upstream TLS configuration = %t, %t", cfg.UpstreamTLS, cfg.UpstreamTLSInsecure)
+	}
+}
+
+func TestInsecureUpstreamTLSRequiresTLS(t *testing.T) {
+	cfg := Config{
+		DockerHost:          "tcp://127.0.0.1:2375",
+		Image:               "redis:7.2-alpine",
+		Idle:                1,
+		StopTimeout:         1,
+		StartTimeout:        1,
+		DiscoveryTimeout:    1,
+		Pull:                PullMissing,
+		UpstreamTLSInsecure: true,
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected insecure upstream TLS without TLS to be rejected")
+	}
+}

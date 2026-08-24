@@ -51,7 +51,7 @@ func run(logger *log.Logger) error {
 	if err := manager.Boot(ctx); err != nil {
 		return fmt.Errorf("initial child discovery failed: %w", err)
 	}
-	server := proxy.NewServer(manager, manager.Ports(), cfg.Idle, logger)
+	server := proxy.NewServer(manager, manager.Ports(), cfg.Idle, cfg.UpstreamTLS, cfg.UpstreamTLSInsecure, logger)
 	runErr := server.Run(ctx)
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), cfg.StopTimeout+15*time.Second)

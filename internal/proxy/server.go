@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -15,20 +16,33 @@ import (
 )
 
 type Server struct {
-	child   *runtime.Manager
-	ports   []int
-	idle    time.Duration
-	logger  *log.Logger
-	tracker *activityTracker
+	child               *runtime.Manager
+	ports               []int
+	idle                time.Duration
+	upstreamTLS         bool
+	upstreamTLSInsecure bool
+	logger              *log.Logger
+	tracker             *activityTracker
 }
 
-func NewServer(child *runtime.Manager, ports []int, idle time.Duration, logger *log.Logger) *Server {
-	return &Server{child: child, ports: append([]int(nil), ports...), idle: idle, logger: logger, tracker: newActivityTracker(child)}
+func NewServer(child *runtime.Manager, ports []int, idle time.Duration, upstreamTLS, upstreamTLSInsecure bool, logger *log.Logger) *Server {
+	return &Server{
+		child:               child,
+		ports:               append([]int(nil), ports...),
+		idle:                idle,
+		upstreamTLS:         upstreamTLS,
+		upstreamTLSInsecure: upstreamTLSInsecure,
+		logger:              logger,
+		tracker:             newActivityTracker(child),
+	}
 }
 
 func (s *Server) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if s.upstreamTLS {
+		s.logger.Printf("upstream TLS enabled (certificate verification: %t)", !s.upstreamTLSInsecure)
+	}
 
 	listeners := make([]net.Listener, 0, len(s.ports))
 	for _, port := range s.ports {
@@ -105,7 +119,7 @@ func (s *Server) proxyConnection(ctx context.Context, client net.Conn, port int)
 		return
 	}
 	dialer := net.Dialer{Timeout: 10 * time.Second}
-	backend, err := dialer.DialContext(ctx, "tcp", address(ip, port))
+	backend, err := dialBackend(ctx, &dialer, address(ip, port), s.upstreamTLS, s.upstreamTLSInsecure)
 	if err != nil {
 		s.logger.Printf("cannot connect to child on TCP port %d: %v", port, err)
 		return
@@ -128,6 +142,20 @@ func (s *Server) proxyConnection(ctx context.Context, client net.Conn, port int)
 	<-copies
 	<-copies
 	close(done)
+}
+
+func dialBackend(ctx context.Context, dialer *net.Dialer, backendAddress string, useTLS, insecure bool) (net.Conn, error) {
+	if !useTLS {
+		return dialer.DialContext(ctx, "tcp", backendAddress)
+	}
+	tlsDialer := tls.Dialer{
+		NetDialer: dialer,
+		Config: &tls.Config{
+			// The child may use an ephemeral self-signed certificate.
+			InsecureSkipVerify: insecure,
+		},
+	}
+	return tlsDialer.DialContext(ctx, "tcp", backendAddress)
 }
 
 func (s *Server) copy(done chan<- struct{}, destination, source net.Conn) {
