@@ -8,6 +8,8 @@ COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/wakewrap ./cmd/wakewrap
 
 FROM alpine:3.22
+LABEL org.opencontainers.image.source="https://github.com/bourgils/wakewrap"
+LABEL org.opencontainers.image.description="On-demand TCP wake and idle shutdown wrapper for Docker containers"
 RUN apk add --no-cache ca-certificates \
     && addgroup -S -g 65532 wakewrap \
     && adduser -S -D -H -u 65532 -G wakewrap wakewrap
