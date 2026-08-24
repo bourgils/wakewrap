@@ -36,13 +36,12 @@ func run(logger *log.Logger) error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	checkCtx, checkCancel := context.WithTimeout(ctx, 10*time.Second)
-	if err := docker.Ping(checkCtx); err != nil {
-		checkCancel()
-		return fmt.Errorf("Docker API is unavailable: %w", err)
+	if err := waitForDocker(ctx, docker, cfg.StartTimeout, logger); err != nil {
+		return err
 	}
-	parent, err := wakeruntime.ResolveSelf(checkCtx, docker, cfg.SelfID)
-	checkCancel()
+	selfCtx, selfCancel := context.WithTimeout(ctx, 10*time.Second)
+	parent, err := wakeruntime.ResolveSelf(selfCtx, docker, cfg.SelfID)
+	selfCancel()
 	if err != nil {
 		return err
 	}
@@ -62,6 +61,43 @@ func run(logger *log.Logger) error {
 		return errors.Join(runErr, stopErr)
 	}
 	return nil
+}
+
+type dockerPinger interface {
+	Ping(context.Context) error
+}
+
+func waitForDocker(ctx context.Context, docker dockerPinger, timeout time.Duration, logger *log.Logger) error {
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	const retryInterval = 250 * time.Millisecond
+	var lastErr error
+	waiting := false
+	for {
+		pingCtx, pingCancel := context.WithTimeout(waitCtx, 5*time.Second)
+		err := docker.Ping(pingCtx)
+		pingCancel()
+		if err == nil {
+			if waiting {
+				logger.Print("Docker API is available")
+			}
+			return nil
+		}
+		lastErr = err
+		if !waiting {
+			logger.Printf("waiting for Docker API at startup: %v", err)
+			waiting = true
+		}
+
+		timer := time.NewTimer(retryInterval)
+		select {
+		case <-waitCtx.Done():
+			timer.Stop()
+			return fmt.Errorf("Docker API remained unavailable for %s: %w", timeout, lastErr)
+		case <-timer.C:
+		}
+	}
 }
 
 func shortID(id string) string {
