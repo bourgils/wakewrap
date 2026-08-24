@@ -15,4 +15,6 @@ RUN apk add --no-cache ca-certificates \
     && adduser -S -D -H -u 65532 -G wakewrap wakewrap
 COPY --from=build /out/wakewrap /usr/local/bin/wakewrap
 USER 65532:65532
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10m --retries=3 \
+    CMD ["sh", "-c", "wget -q -O /dev/null \"http://127.0.0.1:${WAKE_HEALTH_PORT:-18080}/healthz\""]
 ENTRYPOINT ["/usr/local/bin/wakewrap"]

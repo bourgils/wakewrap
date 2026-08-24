@@ -36,6 +36,12 @@ func run(logger *log.Logger) error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	health, err := proxy.NewHealthServer(cfg.HealthPort)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = health.Close() }()
+	logger.Printf("health endpoint listening on 127.0.0.1:%d", cfg.HealthPort)
 	if err := waitForDocker(ctx, docker, cfg.StartTimeout, logger); err != nil {
 		return err
 	}
@@ -52,7 +58,7 @@ func run(logger *log.Logger) error {
 		return fmt.Errorf("initial child discovery failed: %w", err)
 	}
 	server := proxy.NewServer(manager, manager.Ports(), cfg.Idle, cfg.UpstreamTLS, cfg.UpstreamTLSInsecure, logger)
-	runErr := server.Run(ctx)
+	runErr := server.Run(ctx, health.SetReady)
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), cfg.StopTimeout+15*time.Second)
 	stopErr := manager.Stop(stopCtx)

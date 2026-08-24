@@ -31,6 +31,7 @@ type Config struct {
 	ControlNetworks     []string
 	ExcludedMounts      []string
 	Ports               []int
+	HealthPort          int
 	AllowedRegistries   []string
 	DiscoveryConcurrent int
 	UpstreamTLS         bool
@@ -45,6 +46,7 @@ func Load() (Config, error) {
 		Pull:                PullPolicy(valueOr("WAKE_PULL", string(PullMissing))),
 		ControlNetworks:     csvOr("WAKE_CONTROL_NETWORKS", []string{"wake-control"}),
 		ExcludedMounts:      csvOr("WAKE_EXCLUDED_MOUNTS", []string{"/docker-control", "/var/run/docker.sock"}),
+		HealthPort:          18080,
 		AllowedRegistries:   csvOr("WAKE_ALLOWED_REGISTRIES", nil),
 		DiscoveryConcurrent: 256,
 	}
@@ -67,6 +69,12 @@ func Load() (Config, error) {
 	}
 	if cfg.Ports, err = ports(os.Getenv("WAKE_PORTS")); err != nil {
 		return Config{}, err
+	}
+	if raw := strings.TrimSpace(os.Getenv("WAKE_HEALTH_PORT")); raw != "" {
+		cfg.HealthPort, err = strconv.Atoi(raw)
+		if err != nil {
+			return Config{}, errors.New("WAKE_HEALTH_PORT must be between 1 and 65535")
+		}
 	}
 	if cfg.UpstreamTLS, err = booleanOr("WAKE_UPSTREAM_TLS", false); err != nil {
 		return Config{}, err
@@ -105,6 +113,14 @@ func (c Config) Validate() error {
 	}
 	if c.StopTimeout <= 0 || c.StartTimeout <= 0 || c.DiscoveryTimeout <= 0 || c.DiscoverySettle < 0 {
 		return errors.New("WAKE timeouts must be positive")
+	}
+	if c.HealthPort < 1 || c.HealthPort > 65535 {
+		return errors.New("WAKE_HEALTH_PORT must be between 1 and 65535")
+	}
+	for _, port := range c.Ports {
+		if port == c.HealthPort {
+			return fmt.Errorf("WAKE_HEALTH_PORT %d conflicts with WAKE_PORTS", c.HealthPort)
+		}
 	}
 	switch c.Pull {
 	case PullNever, PullMissing, PullAlways:

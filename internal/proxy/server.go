@@ -37,7 +37,7 @@ func NewServer(child *runtime.Manager, ports []int, idle time.Duration, upstream
 	}
 }
 
-func (s *Server) Run(ctx context.Context) error {
+func (s *Server) Run(ctx context.Context, setReady func(bool)) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if s.upstreamTLS {
@@ -79,6 +79,7 @@ func (s *Server) Run(ctx context.Context) error {
 		defer acceptors.Done()
 		s.monitorIdle(ctx)
 	}()
+	setReady(true)
 
 	var runErr error
 	select {
@@ -86,6 +87,7 @@ func (s *Server) Run(ctx context.Context) error {
 	case runErr = <-errCh:
 		cancel()
 	}
+	setReady(false)
 	closeListeners(listeners)
 	acceptors.Wait()
 	connections.Wait()

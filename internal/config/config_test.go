@@ -79,6 +79,53 @@ func TestLoadUpstreamTLS(t *testing.T) {
 	if !cfg.UpstreamTLS || !cfg.UpstreamTLSInsecure {
 		t.Fatalf("upstream TLS configuration = %t, %t", cfg.UpstreamTLS, cfg.UpstreamTLSInsecure)
 	}
+	if cfg.HealthPort != 18080 {
+		t.Fatalf("health port = %d, want 18080", cfg.HealthPort)
+	}
+}
+
+func TestLoadHealthPort(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "tcp://127.0.0.1:2375")
+	t.Setenv("WAKE_IMAGE", "redis:7.2-alpine")
+	for _, test := range []struct {
+		name    string
+		value   string
+		want    int
+		wantErr bool
+	}{
+		{name: "default", value: "", want: 18080},
+		{name: "custom", value: "18081", want: 18081},
+		{name: "not a number", value: "invalid", wantErr: true},
+		{name: "zero", value: "0", wantErr: true},
+		{name: "too large", value: "65536", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("WAKE_HEALTH_PORT", test.value)
+			cfg, err := Load()
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("expected invalid health port to be rejected")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.HealthPort != test.want {
+				t.Fatalf("health port = %d, want %d", cfg.HealthPort, test.want)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsHealthPortConflict(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "tcp://127.0.0.1:2375")
+	t.Setenv("WAKE_IMAGE", "redis:7.2-alpine")
+	t.Setenv("WAKE_PORTS", "6379")
+	t.Setenv("WAKE_HEALTH_PORT", "6379")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected health port conflict to be rejected")
+	}
 }
 
 func TestInsecureUpstreamTLSRequiresTLS(t *testing.T) {
@@ -90,6 +137,7 @@ func TestInsecureUpstreamTLSRequiresTLS(t *testing.T) {
 		StartTimeout:        1,
 		DiscoveryTimeout:    1,
 		Pull:                PullMissing,
+		HealthPort:          18080,
 		UpstreamTLSInsecure: true,
 	}
 	if err := cfg.Validate(); err == nil {
