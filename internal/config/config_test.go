@@ -3,6 +3,7 @@ package config
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestChildEnvironmentFiltersReservedAndOverridesDefaults(t *testing.T) {
@@ -64,6 +65,51 @@ func TestBooleanOr(t *testing.T) {
 	t.Setenv("WAKE_TEST_BOOL", "invalid")
 	if _, err := booleanOr("WAKE_TEST_BOOL", false); err == nil {
 		t.Fatal("expected invalid boolean to be rejected")
+	}
+}
+
+func TestLoadDefaults(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "")
+	t.Setenv("WAKE_IMAGE", "redis:7.2-alpine")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DockerHost != "tcp://127.0.0.1:2375" {
+		t.Fatalf("Docker host = %q", cfg.DockerHost)
+	}
+	if cfg.Idle != 15*time.Minute || cfg.Pull != PullMissing {
+		t.Fatalf("idle and pull defaults = %s, %q", cfg.Idle, cfg.Pull)
+	}
+	if cfg.StopTimeout != 10*time.Second || cfg.StartTimeout != time.Minute || cfg.DiscoveryTimeout != time.Minute {
+		t.Fatalf("timeout defaults = %s, %s, %s", cfg.StopTimeout, cfg.StartTimeout, cfg.DiscoveryTimeout)
+	}
+	if cfg.DiscoverySettle != time.Second || cfg.DiscoveryConcurrent != 256 {
+		t.Fatalf("discovery defaults = %s, %d", cfg.DiscoverySettle, cfg.DiscoveryConcurrent)
+	}
+	if cfg.HealthPort != 18080 || cfg.UpstreamTLS || cfg.UpstreamTLSInsecure {
+		t.Fatalf("health and TLS defaults = %d, %t, %t", cfg.HealthPort, cfg.UpstreamTLS, cfg.UpstreamTLSInsecure)
+	}
+	if !reflect.DeepEqual(cfg.ControlNetworks, []string{"wake-control"}) {
+		t.Fatalf("control networks = %v", cfg.ControlNetworks)
+	}
+	if !reflect.DeepEqual(cfg.ExcludedMounts, []string{"/docker-control", "/var/run/docker.sock"}) {
+		t.Fatalf("excluded mounts = %v", cfg.ExcludedMounts)
+	}
+	if len(cfg.Ports) != 0 || len(cfg.AllowedRegistries) != 0 {
+		t.Fatalf("optional defaults = %v, %v", cfg.Ports, cfg.AllowedRegistries)
+	}
+}
+
+func TestLoadOverridesDockerHost(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "tcp://docker-proxy:2375")
+	t.Setenv("WAKE_IMAGE", "redis:7.2-alpine")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DockerHost != "tcp://docker-proxy:2375" {
+		t.Fatalf("Docker host = %q", cfg.DockerHost)
 	}
 }
 

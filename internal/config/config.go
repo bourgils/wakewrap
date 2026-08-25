@@ -40,7 +40,7 @@ type Config struct {
 
 func Load() (Config, error) {
 	cfg := Config{
-		DockerHost:          strings.TrimSpace(os.Getenv("DOCKER_HOST")),
+		DockerHost:          valueOr("DOCKER_HOST", "tcp://127.0.0.1:2375"),
 		SelfID:              strings.TrimSpace(os.Getenv("WAKEWRAP_SELF_ID")),
 		Image:               strings.TrimSpace(os.Getenv("WAKE_IMAGE")),
 		Pull:                PullPolicy(valueOr("WAKE_PULL", string(PullMissing))),
