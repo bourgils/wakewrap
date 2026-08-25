@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/bourgils/wakewrap/internal/config"
@@ -45,6 +46,79 @@ func TestBuildChildSpecDoesNotCopyControlNetworkOrAliases(t *testing.T) {
 	}
 	if spec.Request.Labels["wakewrap.parent"] != parent.ID || spec.Request.Labels["wakewrap.owner"] != "parent:"+parent.ID || spec.Request.Labels["wakewrap.managed"] != "true" {
 		t.Fatalf("missing ownership labels: %v", spec.Request.Labels)
+	}
+}
+
+func TestBuildChildSpecIncludesServiceName(t *testing.T) {
+	tests := []struct {
+		name   string
+		parent dockerapi.ContainerInspect
+		prefix string
+	}{
+		{
+			name: "compose service",
+			parent: dockerapi.ContainerInspect{
+				ID:     "1234567890abcdef",
+				Name:   "/project-open-webui-1",
+				Config: dockerapi.ContainerConfig{Labels: map[string]string{"com.docker.compose.service": "open-webui"}},
+			},
+			prefix: "wakewrap-child-open-webui-1234567890ab-2-",
+		},
+		{
+			name: "container name fallback",
+			parent: dockerapi.ContainerInspect{
+				ID:   "1234567890abcdef",
+				Name: "/my-service",
+			},
+			prefix: "wakewrap-child-my-service-1234567890ab-2-",
+		},
+		{
+			name: "sanitized service name",
+			parent: dockerapi.ContainerInspect{
+				ID:     "1234567890abcdef",
+				Config: dockerapi.ContainerConfig{Labels: map[string]string{"com.docker.compose.service": " app/service name! "}},
+			},
+			prefix: "wakewrap-child-app-service-name-1234567890ab-2-",
+		},
+		{
+			name:   "missing service and container name",
+			parent: dockerapi.ContainerInspect{ID: "1234567890abcdef"},
+			prefix: "wakewrap-child-unknown-1234567890ab-2-",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.parent.NetworkSettings.Networks = map[string]*dockerapi.EndpointSettings{"application": {}}
+			spec, err := buildChildSpec(config.Config{Image: "redis:7.2-alpine"}, test.parent, dockerapi.ImageInspect{}, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(spec.Name, test.prefix) {
+				t.Fatalf("name = %q, want prefix %q", spec.Name, test.prefix)
+			}
+			if got := len(strings.TrimPrefix(spec.Name, test.prefix)); got != 8 {
+				t.Fatalf("unique suffix length = %d, want 8", got)
+			}
+		})
+	}
+}
+
+func TestBuildChildSpecKeepsNamesUnique(t *testing.T) {
+	parent := dockerapi.ContainerInspect{
+		ID:              "1234567890abcdef",
+		Name:            "/my-service",
+		NetworkSettings: dockerapi.ContainerNetworkSettings{Networks: map[string]*dockerapi.EndpointSettings{"application": {}}},
+	}
+	first, err := buildChildSpec(config.Config{Image: "redis:7.2-alpine"}, parent, dockerapi.ImageInspect{}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := buildChildSpec(config.Config{Image: "redis:7.2-alpine"}, parent, dockerapi.ImageInspect{}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Name == second.Name {
+		t.Fatalf("duplicate child name %q", first.Name)
 	}
 }
 

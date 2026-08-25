@@ -32,7 +32,7 @@ func buildChildSpec(cfg config.Config, parent dockerapi.ContainerInspect, image 
 	if len(parentShort) > 12 {
 		parentShort = parentShort[:12]
 	}
-	name := fmt.Sprintf("wakewrap-child-%s-%d-%s", parentShort, generation, instance[:8])
+	name := fmt.Sprintf("wakewrap-child-%s-%s-%d-%s", childServiceName(parent), parentShort, generation, instance[:8])
 	request := dockerapi.ContainerCreateRequest{
 		Image: cfg.Image,
 		Env:   config.ChildEnvironment(parent.Config.Env, image.Config.Env),
@@ -63,6 +63,31 @@ func buildChildSpec(cfg config.Config, parent dockerapi.ContainerInspect, image 
 		candidates = exposedTCPPorts(image.Config.ExposedPorts)
 	}
 	return childSpec{Name: name, Request: request, ApplicationNetworks: networks, CandidatePorts: candidates}, nil
+}
+
+func childServiceName(parent dockerapi.ContainerInspect) string {
+	name := strings.TrimSpace(parent.Config.Labels["com.docker.compose.service"])
+	if name == "" {
+		name = strings.TrimSpace(strings.TrimPrefix(parent.Name, "/"))
+	}
+	name = strings.Map(func(value rune) rune {
+		switch {
+		case value >= 'a' && value <= 'z':
+			return value
+		case value >= 'A' && value <= 'Z':
+			return value
+		case value >= '0' && value <= '9':
+			return value
+		case value == '-', value == '_', value == '.':
+			return value
+		default:
+			return '-'
+		}
+	}, name)
+	if name = strings.Trim(name, "-_."); name == "" {
+		return "unknown"
+	}
+	return name
 }
 
 func ownerIdentity(parent dockerapi.ContainerInspect) string {
