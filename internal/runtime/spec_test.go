@@ -43,8 +43,62 @@ func TestBuildChildSpecDoesNotCopyControlNetworkOrAliases(t *testing.T) {
 	if got, want := spec.CandidatePorts, []int{6379}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("ports = %v, want %v", got, want)
 	}
-	if spec.Request.Labels["wakewrap.parent"] != parent.ID || spec.Request.Labels["wakewrap.managed"] != "true" {
+	if spec.Request.Labels["wakewrap.parent"] != parent.ID || spec.Request.Labels["wakewrap.owner"] != "parent:"+parent.ID || spec.Request.Labels["wakewrap.managed"] != "true" {
 		t.Fatalf("missing ownership labels: %v", spec.Request.Labels)
+	}
+}
+
+func TestOwnerIdentityUsesStableComposeLabels(t *testing.T) {
+	parent := dockerapi.ContainerInspect{
+		ID:   "current-parent",
+		Name: "/project-service-2",
+		Config: dockerapi.ContainerConfig{Labels: map[string]string{
+			"com.docker.compose.project":          "project",
+			"com.docker.compose.service":          "service",
+			"com.docker.compose.container-number": "2",
+		}},
+	}
+	if got, want := ownerIdentity(parent), "compose:project/service/2"; got != want {
+		t.Fatalf("ownerIdentity() = %q, want %q", got, want)
+	}
+	parent.ID = "replacement-parent"
+	parent.Name = "/project-service-renamed"
+	if got, want := ownerIdentity(parent), "compose:project/service/2"; got != want {
+		t.Fatalf("replacement ownerIdentity() = %q, want %q", got, want)
+	}
+}
+
+func TestOwnerIdentityDefaultsComposeContainerNumber(t *testing.T) {
+	parent := dockerapi.ContainerInspect{Config: dockerapi.ContainerConfig{Labels: map[string]string{
+		"com.docker.compose.project": "project",
+		"com.docker.compose.service": "service",
+	}}}
+	if got, want := ownerIdentity(parent), "compose:project/service/1"; got != want {
+		t.Fatalf("ownerIdentity() = %q, want %q", got, want)
+	}
+}
+
+func TestOwnerIdentityFallsBackToContainerName(t *testing.T) {
+	parent := dockerapi.ContainerInspect{ID: "container-id", Name: "/my-service"}
+	if got, want := ownerIdentity(parent), "container:my-service"; got != want {
+		t.Fatalf("ownerIdentity() = %q, want %q", got, want)
+	}
+}
+
+func TestOwnerIdentitySeparatesComposeProjectsServicesAndReplicas(t *testing.T) {
+	parents := []dockerapi.ContainerInspect{
+		{Config: dockerapi.ContainerConfig{Labels: map[string]string{"com.docker.compose.project": "one", "com.docker.compose.service": "api", "com.docker.compose.container-number": "1"}}},
+		{Config: dockerapi.ContainerConfig{Labels: map[string]string{"com.docker.compose.project": "two", "com.docker.compose.service": "api", "com.docker.compose.container-number": "1"}}},
+		{Config: dockerapi.ContainerConfig{Labels: map[string]string{"com.docker.compose.project": "one", "com.docker.compose.service": "other", "com.docker.compose.container-number": "1"}}},
+		{Config: dockerapi.ContainerConfig{Labels: map[string]string{"com.docker.compose.project": "one", "com.docker.compose.service": "api", "com.docker.compose.container-number": "2"}}},
+	}
+	owners := make(map[string]struct{})
+	for _, parent := range parents {
+		owner := ownerIdentity(parent)
+		if _, exists := owners[owner]; exists {
+			t.Fatalf("duplicate owner identity %q", owner)
+		}
+		owners[owner] = struct{}{}
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 )
 
 func TestListManagedContainersUsesOwnershipFilters(t *testing.T) {
+	requests := make(map[string]int)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/containers/json" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -22,15 +23,25 @@ func TestListManagedContainersUsesOwnershipFilters(t *testing.T) {
 		if err := json.Unmarshal([]byte(r.URL.Query().Get("filters")), &filters); err != nil {
 			t.Fatal(err)
 		}
-		want := map[string]bool{"wakewrap.managed=true": true, "wakewrap.parent=parent": true}
+		var identity string
+		managed := false
 		for _, filter := range filters["label"] {
-			delete(want, filter)
+			if filter == "wakewrap.managed=true" {
+				managed = true
+			} else {
+				identity = filter
+			}
 		}
-		if len(want) != 0 {
-			t.Fatalf("missing ownership filters: %v", want)
+		if !managed || (identity != "wakewrap.parent=parent" && identity != "wakewrap.owner=compose:project/service/1") {
+			t.Fatalf("unexpected ownership filters: %v", filters["label"])
 		}
+		requests[identity]++
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[]`))
+		if identity == "wakewrap.parent=parent" {
+			_, _ = w.Write([]byte(`[{"Id":"current"},{"Id":"shared"}]`))
+		} else {
+			_, _ = w.Write([]byte(`[{"Id":"shared"},{"Id":"orphan"}]`))
+		}
 	}))
 	defer server.Close()
 
@@ -38,8 +49,15 @@ func TestListManagedContainersUsesOwnershipFilters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.ListManagedContainers(context.Background(), "parent"); err != nil {
+	containers, err := client.ListManagedContainers(context.Background(), "parent", "compose:project/service/1")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(containers) != 3 {
+		t.Fatalf("containers = %v, want 3 deduplicated containers", containers)
+	}
+	if requests["wakewrap.parent=parent"] != 1 || requests["wakewrap.owner=compose:project/service/1"] != 1 {
+		t.Fatalf("ownership filter requests = %v", requests)
 	}
 }
 

@@ -108,17 +108,35 @@ func (c *Client) RemoveContainer(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/containers/"+pathSegment(id), query, nil, nil)
 }
 
-func (c *Client) ListManagedContainers(ctx context.Context, parentID string) ([]ContainerSummary, error) {
-	filter, err := json.Marshal(map[string][]string{
-		"label": {"wakewrap.managed=true", "wakewrap.parent=" + parentID},
-	})
-	if err != nil {
-		return nil, err
+func (c *Client) ListManagedContainers(ctx context.Context, parentID, owner string) ([]ContainerSummary, error) {
+	identities := []string{"wakewrap.parent=" + parentID}
+	if owner != "" {
+		identities = append(identities, "wakewrap.owner="+owner)
 	}
-	query := url.Values{"all": []string{"true"}, "filters": []string{string(filter)}}
+
 	var result []ContainerSummary
-	err = c.do(ctx, http.MethodGet, "/containers/json", query, nil, &result)
-	return result, err
+	seen := make(map[string]struct{})
+	for _, identity := range identities {
+		filter, err := json.Marshal(map[string][]string{
+			"label": {"wakewrap.managed=true", identity},
+		})
+		if err != nil {
+			return nil, err
+		}
+		query := url.Values{"all": []string{"true"}, "filters": []string{string(filter)}}
+		var containers []ContainerSummary
+		if err := c.do(ctx, http.MethodGet, "/containers/json", query, nil, &containers); err != nil {
+			return nil, err
+		}
+		for _, container := range containers {
+			if _, exists := seen[container.ID]; exists {
+				continue
+			}
+			seen[container.ID] = struct{}{}
+			result = append(result, container)
+		}
+	}
+	return result, nil
 }
 
 func (c *Client) do(ctx context.Context, method, endpoint string, query url.Values, requestBody, result any) error {

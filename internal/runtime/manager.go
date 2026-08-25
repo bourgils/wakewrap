@@ -56,13 +56,14 @@ type dockerClient interface {
 	StreamContainerLogs(context.Context, string, io.Writer, io.Writer) error
 	StopContainer(context.Context, string, time.Duration) error
 	RemoveContainer(context.Context, string) error
-	ListManagedContainers(context.Context, string) ([]dockerapi.ContainerSummary, error)
+	ListManagedContainers(context.Context, string, string) ([]dockerapi.ContainerSummary, error)
 }
 
 type Manager struct {
 	cfg    config.Config
 	docker dockerClient
 	parent dockerapi.ContainerInspect
+	owner  string
 	logger *log.Logger
 
 	mu         sync.Mutex
@@ -82,7 +83,7 @@ type startedChild struct {
 }
 
 func NewManager(cfg config.Config, docker dockerClient, parent dockerapi.ContainerInspect, logger *log.Logger) *Manager {
-	return &Manager{cfg: cfg, docker: docker, parent: parent, logger: logger, state: StateStopped}
+	return &Manager{cfg: cfg, docker: docker, parent: parent, owner: ownerIdentity(parent), logger: logger, state: StateStopped}
 }
 
 func (m *Manager) Boot(ctx context.Context) error {
@@ -352,12 +353,26 @@ func (m *Manager) prepareImage(ctx context.Context) (dockerapi.ImageInspect, err
 }
 
 func (m *Manager) cleanupStale(ctx context.Context) error {
-	containers, err := m.docker.ListManagedContainers(ctx, m.parent.ID)
+	containers, err := m.docker.ListManagedContainers(ctx, m.parent.ID, m.owner)
 	if err != nil {
 		return fmt.Errorf("list stale children: %w", err)
 	}
 	sort.Slice(containers, func(i, j int) bool { return containers[i].Created > containers[j].Created })
 	for _, container := range containers {
+		previousParentID := container.Labels["wakewrap.parent"]
+		if previousParentID != m.parent.ID {
+			if previousParentID == "" || container.Labels["wakewrap.owner"] != m.owner {
+				return fmt.Errorf("refusing cleanup of unowned child %s", shortID(container.ID))
+			}
+			previousParent, err := m.docker.InspectContainer(ctx, previousParentID)
+			if err != nil && !dockerapi.IsNotFound(err) {
+				return fmt.Errorf("inspect previous parent %s: %w", shortID(previousParentID), err)
+			}
+			if err == nil && previousParent.State.Running {
+				m.logger.Printf("preserving child %s: parent %s is still running", shortID(container.ID), shortID(previousParentID))
+				continue
+			}
+		}
 		if err := m.stopAndRemove(ctx, container.ID); err != nil {
 			return fmt.Errorf("clean stale child %s: %w", shortID(container.ID), err)
 		}
@@ -400,8 +415,25 @@ func (m *Manager) inspectOwned(ctx context.Context, id string) (dockerapi.Contai
 	if err != nil {
 		return dockerapi.ContainerInspect{}, err
 	}
-	if child.Config.Labels["wakewrap.managed"] != "true" || child.Config.Labels["wakewrap.parent"] != m.parent.ID {
+	labels := child.Config.Labels
+	if labels["wakewrap.managed"] != "true" {
 		return dockerapi.ContainerInspect{}, fmt.Errorf("refusing Docker operation on unowned container %s", shortID(id))
+	}
+	if labels["wakewrap.parent"] == m.parent.ID {
+		if owner := labels["wakewrap.owner"]; owner != "" && owner != m.owner {
+			return dockerapi.ContainerInspect{}, fmt.Errorf("refusing Docker operation on unowned container %s", shortID(id))
+		}
+		return child, nil
+	}
+	if labels["wakewrap.owner"] != m.owner || labels["wakewrap.parent"] == "" {
+		return dockerapi.ContainerInspect{}, fmt.Errorf("refusing Docker operation on unowned container %s", shortID(id))
+	}
+	previousParent, err := m.docker.InspectContainer(ctx, labels["wakewrap.parent"])
+	if err != nil && !dockerapi.IsNotFound(err) {
+		return dockerapi.ContainerInspect{}, fmt.Errorf("inspect previous parent %s: %w", shortID(labels["wakewrap.parent"]), err)
+	}
+	if err == nil && previousParent.State.Running {
+		return dockerapi.ContainerInspect{}, fmt.Errorf("refusing Docker operation on container %s: parent %s is still running", shortID(id), shortID(labels["wakewrap.parent"]))
 	}
 	return child, nil
 }

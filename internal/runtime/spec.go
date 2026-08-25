@@ -39,6 +39,7 @@ func buildChildSpec(cfg config.Config, parent dockerapi.ContainerInspect, image 
 		Labels: map[string]string{
 			"wakewrap.managed":    "true",
 			"wakewrap.parent":     parent.ID,
+			"wakewrap.owner":      ownerIdentity(parent),
 			"wakewrap.image":      cfg.Image,
 			"wakewrap.generation": strconv.FormatUint(generation, 10),
 			"wakewrap.instance":   instance,
@@ -62,6 +63,23 @@ func buildChildSpec(cfg config.Config, parent dockerapi.ContainerInspect, image 
 		candidates = exposedTCPPorts(image.Config.ExposedPorts)
 	}
 	return childSpec{Name: name, Request: request, ApplicationNetworks: networks, CandidatePorts: candidates}, nil
+}
+
+func ownerIdentity(parent dockerapi.ContainerInspect) string {
+	labels := parent.Config.Labels
+	project := strings.TrimSpace(labels["com.docker.compose.project"])
+	service := strings.TrimSpace(labels["com.docker.compose.service"])
+	if project != "" && service != "" {
+		number := strings.TrimSpace(labels["com.docker.compose.container-number"])
+		if number == "" {
+			number = "1"
+		}
+		return "compose:" + project + "/" + service + "/" + number
+	}
+	if name := strings.TrimSpace(strings.TrimPrefix(parent.Name, "/")); name != "" {
+		return "container:" + name
+	}
+	return "parent:" + parent.ID
 }
 
 func applicationNetworks(parent dockerapi.ContainerInspect, control []string) []string {
