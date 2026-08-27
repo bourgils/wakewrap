@@ -52,6 +52,7 @@ func buildChildSpec(cfg config.Config, parent dockerapi.ContainerInspect, image 
 			DNSOptions:     append([]string(nil), parent.HostConfig.DNSOptions...),
 			ExtraHosts:     append([]string(nil), parent.HostConfig.ExtraHosts...),
 			ShmSize:        parent.HostConfig.ShmSize,
+			Init:           cloneBool(parent.HostConfig.Init),
 			SecurityOpt:    []string{"no-new-privileges:true"},
 			Privileged:     false,
 			ReadonlyRootfs: false,
@@ -63,6 +64,14 @@ func buildChildSpec(cfg config.Config, parent dockerapi.ContainerInspect, image 
 		candidates = exposedTCPPorts(image.Config.ExposedPorts)
 	}
 	return childSpec{Name: name, Request: request, ApplicationNetworks: networks, CandidatePorts: candidates}, nil
+}
+
+func cloneBool(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func childServiceName(parent dockerapi.ContainerInspect) string {

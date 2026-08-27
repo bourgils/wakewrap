@@ -10,11 +10,13 @@ import (
 )
 
 func TestBuildChildSpecDoesNotCopyControlNetworkOrAliases(t *testing.T) {
+	init := true
 	parent := dockerapi.ContainerInspect{
 		ID:     "1234567890abcdef",
 		Config: dockerapi.ContainerConfig{Env: []string{"APP_ENV=prod", "WAKE_IMAGE=ignored"}},
 		HostConfig: dockerapi.HostConfigInspect{
 			ShmSize: 536870912,
+			Init:    &init,
 		},
 		NetworkSettings: dockerapi.ContainerNetworkSettings{Networks: map[string]*dockerapi.EndpointSettings{
 			"project_default":      {Aliases: []string{"redis"}},
@@ -40,6 +42,9 @@ func TestBuildChildSpecDoesNotCopyControlNetworkOrAliases(t *testing.T) {
 	}
 	if spec.Request.HostConfig.ShmSize != parent.HostConfig.ShmSize {
 		t.Fatalf("shm size = %d, want %d", spec.Request.HostConfig.ShmSize, parent.HostConfig.ShmSize)
+	}
+	if spec.Request.HostConfig.Init == nil || !*spec.Request.HostConfig.Init {
+		t.Fatalf("init = %v, want true", spec.Request.HostConfig.Init)
 	}
 	if got, want := spec.CandidatePorts, []int{6379}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("ports = %v, want %v", got, want)
