@@ -202,7 +202,7 @@ func (s containerLogStream) copy(source io.Reader) error {
 	var header [8]byte
 	for {
 		if _, err := io.ReadFull(source, header[:]); err != nil {
-			if errors.Is(err, io.EOF) {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				return nil
 			}
 			return err

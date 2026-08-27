@@ -131,7 +131,6 @@ func TestContainerLogStreamRejectsMalformedFrames(t *testing.T) {
 		input []byte
 		want  error
 	}{
-		{name: "truncated header", input: []byte{1, 0}, want: io.ErrUnexpectedEOF},
 		{name: "truncated payload", input: []byte{1, 0, 0, 0, 0, 0, 0, 2, 'x'}, want: io.EOF},
 		{name: "unknown stream", input: []byte{3, 0, 0, 0, 0, 0, 0, 0}},
 	}
@@ -145,6 +144,20 @@ func TestContainerLogStreamRejectsMalformedFrames(t *testing.T) {
 				t.Fatalf("error = %v, want %v", err, test.want)
 			}
 		})
+	}
+}
+
+func TestContainerLogStreamAcceptsTruncatedFinalHeader(t *testing.T) {
+	var input bytes.Buffer
+	writeLogFrame(t, &input, 1, "application stopped\n")
+	_, _ = input.Write([]byte{1, 0})
+
+	var stdout bytes.Buffer
+	if err := (containerLogStream{stdout: &stdout, stderr: io.Discard}).copy(&input); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := stdout.String(), "application stopped\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
 
